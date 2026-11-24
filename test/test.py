@@ -78,11 +78,18 @@ async def test_behavior_matches_verilog_tb(dut):
         await load_instr(dut, addr, instr)
         instruction_report.append(f"  [{addr}] 0x{instr:04X}  {decode_instr(instr)}")
 
-    await Timer(1, unit="ns")
+    await Timer(2, unit="ns")
 
-    for addr, exp in enumerate(program):
-        got = int(dut.user_project.cpu.inst_mem.ram[addr].value)
-        assert got == exp, f"RAM[{addr}] mismatch: got 0x{got:04X}, exp 0x{exp:04X}"
+    # Gate-level netlist is flat, so the cpu hierarchy is only there in RTL.
+    try:
+        cpu = dut.user_project.cpu
+    except AttributeError:
+        cpu = None
+
+    if cpu is not None:
+        for addr, exp in enumerate(program):
+            got = int(cpu.inst_mem.ram[addr].value)
+            assert got == exp, f"RAM[{addr}] mismatch: got 0x{got:04X}, exp 0x{exp:04X}"
 
     assert int(dut.uio_oe.value) == 0x00, "uio_oe must be 0x00 in load mode"
 
@@ -104,25 +111,31 @@ async def test_behavior_matches_verilog_tb(dut):
 
     try:
         for exp_pc, exp_alu in expected_steps:
-            await Timer(1, unit="ns")
-            got_pc = int(dut.user_project.cpu.pc_out.value)
+            await Timer(2, unit="ns")
             got_alu = as_u16_from_outputs(dut)
-            execution_report.append(
-                f"  PC {got_pc} vs {exp_pc} | ALU 0x{got_alu:04X} vs 0x{exp_alu:04X}"
-            )
-            assert got_pc == exp_pc, f"PC mismatch: got {got_pc}, exp {exp_pc}"
+            if cpu is not None:
+                got_pc = int(cpu.pc_out.value)
+                execution_report.append(
+                    f"  PC {got_pc} vs {exp_pc} | ALU 0x{got_alu:04X} vs 0x{exp_alu:04X}"
+                )
+                assert got_pc == exp_pc, f"PC mismatch: got {got_pc}, exp {exp_pc}"
+            else:
+                execution_report.append(
+                    f"  ALU 0x{got_alu:04X} vs 0x{exp_alu:04X}"
+                )
             assert got_alu == exp_alu, f"ALU mismatch: got 0x{got_alu:04X}, exp 0x{exp_alu:04X}"
             await RisingEdge(dut.clk)
 
-        await Timer(1, unit="ns")
-        r1 = int(dut.user_project.cpu.rf.registers[1].value)
-        r3 = int(dut.user_project.cpu.rf.registers[3].value)
+        if cpu is not None:
+            await Timer(2, unit="ns")
+            r1 = int(cpu.rf.registers[1].value)
+            r3 = int(cpu.rf.registers[3].value)
 
-        execution_report.append(f"  r1 0x{r1:04X} vs 0x000A")
-        execution_report.append(f"  r3 0x{r3:04X} vs 0x000E")
+            execution_report.append(f"  r1 0x{r1:04X} vs 0x000A")
+            execution_report.append(f"  r3 0x{r3:04X} vs 0x000E")
 
-        assert r1 == 0x000A, f"r1 mismatch: got 0x{r1:04X}, exp 0x000A"
-        assert r3 == 0x000E, f"r3 mismatch: got 0x{r3:04X}, exp 0x000E"
+            assert r1 == 0x000A, f"r1 mismatch: got 0x{r1:04X}, exp 0x000A"
+            assert r3 == 0x000E, f"r3 mismatch: got 0x{r3:04X}, exp 0x000E"
     finally:
         dut._log.info("\nLoaded instructions:")
         for line in instruction_report:
