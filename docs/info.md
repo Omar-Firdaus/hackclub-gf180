@@ -9,21 +9,20 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-16-bit single-cycle CPU. Four 16-bit registers, and r0 reads as 0. Instruction memory holds 8 words. Data memory holds 2 words.
+16-bit CPU with 4 registers. r0 reads as 0. The program and data live in an external SRAM.
 
-Opcodes: add, sub, xor, or, addi, lw, sw, jump.
+`uo_out[6:0]` is the address. `uo_out[7]` is the write strobe. `uio[7:0]` is the data byte. A read leaves `uio` as inputs. A write drives `uio` and raises the strobe.
 
-`ui_in[7] = 0` loads instructions. `ui_in[7] = 1` runs one instruction per clock. The ALU result is split across `uo_out` (low byte) and `uio_out` (high byte).
+Addresses `0x00` to `0x7E` are SRAM. A load from `0x7F` returns `ui_in` in the low byte.
+
+Instructions are two bytes, little endian. Opcodes: add, sub, xor, or, addi, lw, sw, jump, beq. jump and beq use a byte address in the low 7 bits.
 
 ## How to test
 
-1. Set `ui_in[7]` to 0.
-2. Put the instruction address on `ui_in[2:0]`.
-3. `ui_in[6] = 0` writes the low byte from `uio_in`. `ui_in[6] = 1` writes the high byte.
-4. Set `ui_in[7]` to 1 to run.
+Put a program in the SRAM and release reset. Each instruction takes several clocks.
 
 From `test/`, run `make`. The waveform is `test/tb.fst`.
 
 ## External hardware
 
-None.
+128-byte SRAM. `uo_out[6:0]` to the address, `uo_out[7]` to write enable, `uio[7:0]` to the data pins. `ui_in` can be switches.

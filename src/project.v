@@ -2,329 +2,239 @@
 `default_nettype none
 
 module tt_um_top_module_16_mips (
-    input  wire [7:0] ui_in,  //input    
-    output wire [7:0] uo_out, //output   
-    input  wire [7:0] uio_in, //bi-in  
-    output wire [7:0] uio_out,//bi-out  
-    output wire [7:0] uio_oe, //mask which controll bidi  
-    input  wire       ena,      
+    input  wire [7:0] ui_in,
+    output wire [7:0] uo_out,
+    input  wire [7:0] uio_in,
+    output wire [7:0] uio_out,
+    output wire [7:0] uio_oe,
+    input  wire       ena,
     input  wire       clk,
     input  wire       rst_n
 );
 
-    wire _unused_ok = &{1'b0, ui_in[5:3], 1'b0};
-    wire rst = !rst_n;
-    wire mode = ui_in[7];           // 1 = run, 0 = load
-    wire byte_sel = ui_in[6];       // 0 = low byte, 1 = high byte
-    wire [15:0] alu_out;
-    wire write_ena;
+    wire [6:0] addr;
+    wire       we;
+    wire [7:0] dout;
 
-    assign write_ena = ena & !mode;
-
-    mips_single_cycle cpu (
+    mips_cpu cpu (
         .clk(clk),
-        .rst(rst),
-        .run_en(mode),
-        .write_enable(write_ena),
-        .write_addr(ui_in[2:0]),
-        .write_data_byte(uio_in),
-        .write_byte_sel(byte_sel),
-        .ALU_out(alu_out)
+        .rst_n(rst_n),
+        .ena(ena),
+        .ui_in(ui_in),
+        .din(uio_in),
+        .addr(addr),
+        .we(we),
+        .dout(dout)
     );
 
-    assign uo_out = mode ? alu_out[7:0] : uio_in;
-    assign uio_oe = mode ? 8'b1111_1111 : 8'b0000_0000;
-    assign uio_out = alu_out[15:8];
+    assign uo_out  = {we, addr};
+    assign uio_out = dout;
+    assign uio_oe  = {8{we}};
 
 endmodule
 
-//  PC Module
-module PC(
-    input wire clk, rst, en, jump,
-    input wire [2:0] jump_address,
-    output reg [2:0] pc_out
+module alu (
+    input  wire [15:0] a,
+    input  wire [15:0] b,
+    input  wire [2:0]  op,
+    output reg  [15:0] y
 );
-    always @(posedge clk) begin
-        if (rst) pc_out <= 3'd0;
-        else if (en) pc_out <= jump ? jump_address : (pc_out + 1);
-    end
-endmodule
-
-//  Instruction Memory 
-module instruction_memory(
-    input wire clk, write_enable,
-    input wire [2:0] p_in, write_addr,
-    input wire byte_select,
-    input wire [7:0] write_data_byte,
-    output wire [15:0] instruction
-);
-    reg [15:0] ram [0:7];
-
-    always @(posedge clk) begin
-        if (write_enable) begin
-            if (byte_select)
-                ram[write_addr][15:8] <= write_data_byte;
-            else
-                ram[write_addr][7:0] <= write_data_byte;
-        end
-    end
-
-    assign instruction = ram[p_in];
-endmodule
-
-//  Decoder 
-module decoder (
-    input wire [15:0] instruction_in,
-    output reg [1:0] rs, rt, rd,
-    output reg [7:0] im,
-    output reg [2:0] jump_addr
-);
-
-    wire [3:0] opcode = instruction_in[15:12];
-
     always @(*) begin
-        rs = 2'b00;
-        rt = 2'b00;
-        rd = 2'b00;
-        im = 8'b0000_0000;
-        jump_addr = 3'b000;
-
-        case (opcode)
-            4'b0000, // add
-            4'b0001, // sub
-            4'b0010, // xor 
-            4'b0011: //or
-             begin // R-type: add, sub, xor, or
-                rs = instruction_in[11:10];
-                rt = instruction_in[9:8];
-                rd = instruction_in[7:6];
-            end
-
-            4'b0100, //lw
-            4'b0101, //sw
-            4'b0110: //addi
-             begin // lw, sw, addi
-                rs = instruction_in[11:10];
-                rt = instruction_in[9:8];
-                im = instruction_in[7:0];
-            end
-
-            4'b0111: begin // jump
-                jump_addr = instruction_in[2:0];
-            end
-
-            default: begin
-            end
+        case (op)
+            3'd1: y = a - b;
+            3'd2: y = a | b;
+            3'd3: y = a ^ b;
+            default: y = a + b;
         endcase
     end
-
-endmodule
-
-module alu
-  #(parameter ADD = 3'b000,
-              SUB = 3'b001,
-              ORR = 3'b010,
-              XORR = 3'b011)
-(
-    input wire [15:0] A,
-    input wire [15:0] B,
-    input wire [2:0] alu_op,
-    output reg [15:0] alu_out
-);
-
-always @(*) begin
-        case (alu_op)
-            ADD: alu_out = A + B;
-            SUB: alu_out = A - B;
-            ORR:  alu_out = A | B;
-            XORR: alu_out = A ^ B;
-            default: alu_out = 16'b0;
-        endcase
-   end
-endmodule
-
-//  Control Unit 
-module control_unit (
-    input wire [3:0] opcode,
-    output reg MemRead,
-    output reg MemWrite,
-    output reg RegWrite,
-    output reg ALUsrc,
-    output reg RegDst,
-    output reg MemtoReg,
-    output reg Jump,
-    output reg [2:0] alu_op
-);
-
-    always @(*) begin
-        MemRead = 1'b0;
-        MemWrite = 1'b0;
-        RegWrite = 1'b0;
-        ALUsrc = 1'b0;
-        RegDst = 1'b0;
-        MemtoReg = 1'b0;
-        Jump = 1'b0;
-        alu_op = 3'b000;
-
-        case (opcode)
-            4'b0000: begin RegDst = 1'b1; RegWrite = 1'b1; alu_op = 3'b000; end // add
-            4'b0001: begin RegDst = 1'b1; RegWrite = 1'b1; alu_op = 3'b001; end // sub
-            4'b0010: begin RegDst = 1'b1; RegWrite = 1'b1; alu_op = 3'b011; end // xor
-            4'b0011: begin RegDst = 1'b1; RegWrite = 1'b1; alu_op = 3'b010; end // or
-            4'b0100: begin ALUsrc = 1'b1; MemtoReg = 1'b1; RegWrite = 1'b1; MemRead = 1'b1; alu_op = 3'b000; end // lw
-            4'b0101: begin ALUsrc = 1'b1; MemWrite = 1'b1; alu_op = 3'b000; end // sw
-            4'b0110: begin ALUsrc = 1'b1; RegWrite = 1'b1; alu_op = 3'b000; end // addi
-            4'b0111: begin Jump = 1'b1; end // jump
-            default: begin
-            end
-        endcase
-    end
-endmodule
-
-module data_mem(
-    input wire clk,
-    input wire MemWrite,
-    input wire MemRead,
-    input wire  addr,
-    input wire [15:0] writeData,
-    output wire [15:0] readData
-);
-
-    reg [15:0] memory [0:1];
-
-    assign readData = MemRead ? memory[addr] : 16'b0;
-
-    always @(posedge clk) begin
-        if (MemWrite)
-            memory[addr] <= writeData;
-    end
-
 endmodule
 
 module regfile (
-    input wire clk,                  
-    input wire [1:0] readReg1, 
-    input wire [1:0] readReg2, 
-    input wire [1:0] writeReg,
-    input wire [15:0] writeData,
-    input wire RegWrite,
-    output wire [15:0] readData1,    
+    input  wire       clk,
+    input  wire [1:0] readReg1,
+    input  wire [1:0] readReg2,
+    input  wire [1:0] writeReg,
+    input  wire [15:0] writeData,
+    input  wire       RegWrite,
+    output wire [15:0] readData1,
     output wire [15:0] readData2
 );
-
     reg [15:0] registers [3:0];
 
-    
     assign readData1 = (readReg1 == 2'b00) ? 16'h0000 : registers[readReg1];
     assign readData2 = (readReg2 == 2'b00) ? 16'h0000 : registers[readReg2];
 
-    
     always @(posedge clk) begin
-        if (RegWrite && writeReg != 2'b00) begin
+        if (RegWrite && writeReg != 2'b00)
             registers[writeReg] <= writeData;
+    end
+endmodule
+
+module mips_cpu (
+    input  wire       clk,
+    input  wire       rst_n,
+    input  wire       ena,
+    input  wire [7:0] ui_in,
+    input  wire [7:0] din,
+    output reg  [6:0] addr,
+    output reg        we,
+    output reg  [7:0] dout
+);
+    localparam FETCH0 = 3'd0;
+    localparam FETCH1 = 3'd1;
+    localparam EXEC   = 3'd2;
+    localparam LD0    = 3'd3;
+    localparam LD1    = 3'd4;
+    localparam ST0    = 3'd5;
+    localparam ST1    = 3'd6;
+    localparam LDPORT = 3'd7;
+
+    reg [2:0] state;
+    reg [6:0] pc;
+    reg [15:0] ir;
+    reg [7:0] lo;
+
+    wire [3:0] op = ir[15:12];
+    wire [7:0] rdbyte = (addr == 7'h7f) ? ui_in : din;
+    wire [15:0] imm_s = {{8{ir[7]}}, ir[7:0]};
+    wire [15:0] rs_val;
+    wire [15:0] rt_val;
+    wire [15:0] alu_b = (op == 4'h6) ? imm_s : rt_val;
+    wire [2:0] alu_op =
+        (op == 4'h1) ? 3'd1 :
+        (op == 4'h2) ? 3'd3 :
+        (op == 4'h3) ? 3'd2 : 3'd0;
+    wire [15:0] alu_y;
+    wire [15:0] sum = rs_val + imm_s;
+    wire [6:0] ea = sum[6:0];
+    wire arith = (state == EXEC) && (op <= 4'h3 || op == 4'h6);
+    wire reg_we = arith || (state == LD1) || (state == LDPORT);
+    wire [1:0] wreg = (op <= 4'h3) ? ir[7:6] : ir[9:8];
+    wire [15:0] wr_data =
+        (state == LDPORT) ? {8'h00, ui_in} :
+        (state == LD1)    ? {rdbyte, lo} :
+        alu_y;
+
+    regfile rf (
+        .clk(clk),
+        .readReg1(ir[11:10]),
+        .readReg2(ir[9:8]),
+        .writeReg(wreg),
+        .writeData(wr_data),
+        .RegWrite(reg_we & ena & rst_n),
+        .readData1(rs_val),
+        .readData2(rt_val)
+    );
+
+    alu alu_unit (
+        .a(rs_val),
+        .b(alu_b),
+        .op(alu_op),
+        .y(alu_y)
+    );
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            pc <= 7'd0;
+            ir <= 16'd0;
+            lo <= 8'd0;
+            addr <= 7'd0;
+            we <= 1'b0;
+            dout <= 8'd0;
+            state <= FETCH0;
+        end else if (!ena) begin
+            we <= 1'b0;
+        end else begin
+            case (state)
+                FETCH0: begin
+                    lo <= rdbyte;
+                    addr <= pc + 7'd1;
+                    we <= 1'b0;
+                    state <= FETCH1;
+                end
+                FETCH1: begin
+                    ir <= {rdbyte, lo};
+                    we <= 1'b0;
+                    state <= EXEC;
+                end
+                EXEC: begin
+                    we <= 1'b0;
+                    case (op)
+                        4'h0, 4'h1, 4'h2, 4'h3, 4'h6: begin
+                            pc <= pc + 7'd2;
+                            addr <= pc + 7'd2;
+                            state <= FETCH0;
+                        end
+                        4'h4: begin
+                            addr <= ea;
+                            if (ea == 7'h7f)
+                                state <= LDPORT;
+                            else
+                                state <= LD0;
+                        end
+                        4'h5: begin
+                            addr <= ea;
+                            dout <= rt_val[7:0];
+                            we <= 1'b1;
+                            state <= ST0;
+                        end
+                        4'h7: begin
+                            pc <= ir[6:0];
+                            addr <= ir[6:0];
+                            state <= FETCH0;
+                        end
+                        4'h8: begin
+                            if (rs_val == rt_val) begin
+                                pc <= ir[6:0];
+                                addr <= ir[6:0];
+                            end else begin
+                                pc <= pc + 7'd2;
+                                addr <= pc + 7'd2;
+                            end
+                            state <= FETCH0;
+                        end
+                        default: begin
+                            pc <= pc + 7'd2;
+                            addr <= pc + 7'd2;
+                            state <= FETCH0;
+                        end
+                    endcase
+                end
+                LD0: begin
+                    lo <= rdbyte;
+                    addr <= addr + 7'd1;
+                    we <= 1'b0;
+                    state <= LD1;
+                end
+                LD1: begin
+                    pc <= pc + 7'd2;
+                    addr <= pc + 7'd2;
+                    we <= 1'b0;
+                    state <= FETCH0;
+                end
+                ST0: begin
+                    addr <= ea + 7'd1;
+                    dout <= rt_val[15:8];
+                    we <= 1'b1;
+                    state <= ST1;
+                end
+                ST1: begin
+                    pc <= pc + 7'd2;
+                    addr <= pc + 7'd2;
+                    we <= 1'b0;
+                    state <= FETCH0;
+                end
+                LDPORT: begin
+                    pc <= pc + 7'd2;
+                    addr <= pc + 7'd2;
+                    we <= 1'b0;
+                    state <= FETCH0;
+                end
+                default: begin
+                    we <= 1'b0;
+                    state <= FETCH0;
+                end
+            endcase
         end
     end
-
 endmodule
-
-module mips_single_cycle (
-    input  wire        clk, rst, run_en, write_enable,
-    input  wire [2:0] write_addr,
-    input  wire [7:0] write_data_byte,
-    input  wire write_byte_sel,    
-    output wire [15:0] ALU_out   
-);
-
-   //Internal nets
-   wire [2:0] pc_out;
-   wire        jump;
-   wire [15:0] instruction;
-   wire [1:0]  rs, rt, rd;
-   wire [7:0] im;
-   wire [2:0] jump_addr;
-   wire        MemRead, MemWrite, RegWrite, ALUsrc, RegDst, MemtoReg;
-   wire [2:0]  ALUOp;
-   wire [1:0]  writeReg;
-   wire [15:0] writeData_reg;
-   wire [15:0] readData1, readData2;
-   wire [15:0] MemData;
-   wire [15:0] ALU_input1, ALU_input2;
-   wire [15:0] imm_sgn_ext;
-
-   
-   
-   assign writeReg          = (RegDst) ? rd : rt;
-   assign writeData_reg     = (MemtoReg) ? MemData : ALU_out;
-   assign ALU_input1        = readData1;
-   assign imm_sgn_ext       = {{8{im[7]}}, im};
-   assign ALU_input2        = (ALUsrc) ? imm_sgn_ext : readData2;
-
-   PC pc (
-       .clk(clk), 
-       .rst(rst), 
-       .en(run_en),
-       .jump(jump), 
-       .jump_address(jump_addr), 
-       .pc_out(pc_out)
-   );   
-
-   instruction_memory inst_mem (
-       .clk(clk),
-       .write_enable(write_enable),
-       .p_in(pc_out), 
-       .write_addr(write_addr),
-       .byte_select(write_byte_sel),
-       .write_data_byte(write_data_byte),  
-       .instruction(instruction)
-   );
-
-   decoder dec (
-       .instruction_in(instruction),
-       .rs(rs),                      
-       .rt(rt), 
-       .rd(rd), 
-       .im(im), 
-       .jump_addr(jump_addr)
-   );
-
-   control_unit cu (
-       .opcode(instruction[15:12]), 
-       .MemRead(MemRead), 
-       .MemWrite(MemWrite), 
-       .RegWrite(RegWrite), 
-       .ALUsrc(ALUsrc), 
-       .RegDst(RegDst), 
-       .MemtoReg(MemtoReg), 
-       .Jump(jump), 
-       .alu_op(ALUOp)
-   );
-
-   regfile rf (
-       .clk(clk), 
-       .readReg1(rs), 
-       .readReg2(rt),  
-       .RegWrite(RegWrite & run_en), 
-       .writeData(writeData_reg), 
-       .readData1(readData1), 
-       .readData2(readData2), 
-       .writeReg(writeReg) 
-   );
-
-   alu alu_unit (
-       .A(ALU_input1), 
-       .B(ALU_input2), 
-       .alu_op(ALUOp), 
-       .alu_out(ALU_out)
-   );
-
-   data_mem data_memory (
-       .clk(clk), 
-       .MemWrite(MemWrite & run_en), 
-       .MemRead(MemRead), 
-       .addr(ALU_out[0]), 
-       .writeData(readData2), 
-       .readData(MemData)
-   );
-
-endmodule
-

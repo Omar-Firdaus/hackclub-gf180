@@ -1,146 +1,83 @@
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge, Timer
+from cocotb.triggers import ClockCycles, RisingEdge, Timer
 
 
-def as_u16_from_outputs(dut) -> int:
-    return (int(dut.uio_out.value) << 8) | int(dut.uo_out.value)
-
-
-def decode_instr(instr: int) -> str:
-    opcode = (instr >> 12) & 0xF
-    rs = (instr >> 10) & 0x3
-    rt = (instr >> 8) & 0x3
-    rd = (instr >> 6) & 0x3
-    imm = instr & 0xFF
-    target = instr & 0x7
-
-    if opcode == 0x0:
-        return f"add r{rd}, r{rs}, r{rt}"
-    if opcode == 0x1:
-        return f"sub r{rd}, r{rs}, r{rt}"
-    if opcode == 0x2:
-        return f"xor r{rd}, r{rs}, r{rt}"
-    if opcode == 0x3:
-        return f"or r{rd}, r{rs}, r{rt}"
-    if opcode == 0x4:
-        return f"lw r{rt}, [r{rs} + 0x{imm:02X}]"
-    if opcode == 0x5:
-        return f"sw r{rt}, [r{rs} + 0x{imm:02X}]"
-    if opcode == 0x6:
-        return f"addi r{rt}, r{rs}, 0x{imm:02X}"
-    if opcode == 0x7:
-        return f"jump {target}"
-
-    return "unknown"
-
-
-async def load_instr(dut, addr: int, instr: int) -> None:
-    await FallingEdge(dut.clk)
-    dut.ui_in.value = addr & 0x7
-    dut.uio_in.value = instr & 0xFF
-    await RisingEdge(dut.clk)
-
-    await FallingEdge(dut.clk)
-    dut.ui_in.value = 0x40 | (addr & 0x7)
-    dut.uio_in.value = (instr >> 8) & 0xFF
-    await RisingEdge(dut.clk)
+async def sram(dut, mem):
+    while True:
+        await RisingEdge(dut.clk)
+        await Timer(1, unit="ns")
+        uo = int(dut.uo_out.value)
+        addr = uo & 0x7F
+        we = (uo >> 7) & 1
+        if we:
+            if addr != 0x7F:
+                mem[addr] = int(dut.uio_out.value)
+        else:
+            if addr != 0x7F:
+                dut.uio_in.value = mem[addr]
 
 
 @cocotb.test()
-async def test_behavior_matches_verilog_tb(dut):
+async def test_bus_program(dut):
+    mem = [0] * 128
+    prog = {
+        0x00: 0x01, 0x01: 0x61,
+        0x02: 0x01, 0x03: 0x62,
+        0x04: 0x08, 0x05: 0x86,
+        0x06: 0xFF, 0x07: 0x63,
+        0x08: 0xC0, 0x09: 0x06,
+        0x0A: 0x20, 0x0B: 0x53,
+        0x0C: 0x20, 0x0D: 0x41,
+        0x0E: 0x7F, 0x0F: 0x42,
+        0x10: 0x10, 0x11: 0x70,
+    }
+    for a, b in prog.items():
+        mem[a] = b
+
+    expect = [
+        0x01, 0x01, 0x02, 0x03, 0x03, 0x04, 0x05, 0x05,
+        0x08, 0x09, 0x09, 0x0A, 0x0B, 0x0B, 0xA0, 0xA1,
+        0x0C, 0x0D, 0x0D, 0x20, 0x21, 0x0E, 0x0F, 0x0F,
+        0x7F, 0x10, 0x11, 0x11, 0x10,
+    ]
+
     cocotb.start_soon(Clock(dut.clk, 100, unit="ns").start())
+    cocotb.start_soon(sram(dut, mem))
 
     dut.rst_n.value = 0
-    dut.ena.value = 0
-    dut.ui_in.value = 0
-    dut.uio_in.value = 0
-
-    await ClockCycles(dut.clk, 4)
-    dut.rst_n.value = 1
     dut.ena.value = 1
+    dut.ui_in.value = 0x5A
+    dut.uio_in.value = mem[0]
 
-    program = [
-        0x610A,  # addi r1, r0, 10
-        0x630E,  # addi r3, r0, 14
-        0x5300,  # sw   r3, r0, 0
-        0x5101,  # sw   r1, r0, 1
-        0x4100,  # lw   r1, r0, 0
-        0x37C0,  # or   r3, r1, r3
-        0x7000,  # j    0
-        0x7000,  # j    0
-    ]
+    await ClockCycles(dut.clk, 2)
+    dut.rst_n.value = 1
 
-    instruction_report = []
-    execution_report = []
+    for i, exp in enumerate(expect):
+        await RisingEdge(dut.clk)
+        await Timer(1, unit="ns")
+        got = int(dut.uo_out.value)
+        assert got == exp, f"cycle {i}: uo_out {got:02X} != {exp:02X}"
+        if exp & 0x80:
+            assert int(dut.uio_oe.value) == 0xFF
+            if exp == 0xA0:
+                assert int(dut.uio_out.value) == 0x02
+            if exp == 0xA1:
+                assert int(dut.uio_out.value) == 0x00
+        else:
+            assert int(dut.uio_oe.value) == 0x00
 
-    for addr, instr in enumerate(program):
-        await load_instr(dut, addr, instr)
-        instruction_report.append(f"  [{addr}] 0x{instr:04X}  {decode_instr(instr)}")
+    await Timer(1, unit="ns")
+    assert mem[0x20] == 0x02
+    assert mem[0x21] == 0x00
 
-    await Timer(2, unit="ns")
-
-    # Gate-level netlist is flat, so the cpu hierarchy is only there in RTL.
     try:
-        cpu = dut.user_project.cpu
+        r1 = int(dut.user_project.cpu.rf.registers[1].value)
+        r2 = int(dut.user_project.cpu.rf.registers[2].value)
+        r3 = int(dut.user_project.cpu.rf.registers[3].value)
     except AttributeError:
-        cpu = None
+        return
 
-    if cpu is not None:
-        for addr, exp in enumerate(program):
-            got = int(cpu.inst_mem.ram[addr].value)
-            assert got == exp, f"RAM[{addr}] mismatch: got 0x{got:04X}, exp 0x{exp:04X}"
-
-    assert int(dut.uio_oe.value) == 0x00, "uio_oe must be 0x00 in load mode"
-
-    dut.ui_in.value = 0x80
-    dut.uio_in.value = 0x00
-    await FallingEdge(dut.clk)
-    assert int(dut.uio_oe.value) == 0xFF, "uio_oe must be 0xFF in run mode"
-
-    expected_steps = [
-        (0, 0x000A),
-        (1, 0x000E),
-        (2, 0x0000),
-        (3, 0x0001),
-        (4, 0x0000),
-        (5, 0x000E),
-        (6, 0x0000),
-        (0, 0x000A),
-    ]
-
-    try:
-        for exp_pc, exp_alu in expected_steps:
-            await Timer(2, unit="ns")
-            got_alu = as_u16_from_outputs(dut)
-            if cpu is not None:
-                got_pc = int(cpu.pc_out.value)
-                execution_report.append(
-                    f"  PC {got_pc} vs {exp_pc} | ALU 0x{got_alu:04X} vs 0x{exp_alu:04X}"
-                )
-                assert got_pc == exp_pc, f"PC mismatch: got {got_pc}, exp {exp_pc}"
-            else:
-                execution_report.append(
-                    f"  ALU 0x{got_alu:04X} vs 0x{exp_alu:04X}"
-                )
-            assert got_alu == exp_alu, f"ALU mismatch: got 0x{got_alu:04X}, exp 0x{exp_alu:04X}"
-            await RisingEdge(dut.clk)
-
-        if cpu is not None:
-            await Timer(2, unit="ns")
-            r1 = int(cpu.rf.registers[1].value)
-            r3 = int(cpu.rf.registers[3].value)
-
-            execution_report.append(f"  r1 0x{r1:04X} vs 0x000A")
-            execution_report.append(f"  r3 0x{r3:04X} vs 0x000E")
-
-            assert r1 == 0x000A, f"r1 mismatch: got 0x{r1:04X}, exp 0x000A"
-            assert r3 == 0x000E, f"r3 mismatch: got 0x{r3:04X}, exp 0x000E"
-    finally:
-        dut._log.info("\nLoaded instructions:")
-        for line in instruction_report:
-            dut._log.info(line)
-
-        dut._log.info("\nExecution trace (expected vs got):")
-        for line in execution_report:
-            dut._log.info(line)
+    assert r1 == 0x0002
+    assert r2 == 0x005A
+    assert r3 == 0x0002

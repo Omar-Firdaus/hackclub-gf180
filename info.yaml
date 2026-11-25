@@ -3,7 +3,7 @@ project:
   title:        "16-bit MIPS Single Cycle Processor"      # Project title
   author:       "Omar Firdaus"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "A 16-bit MIPS-like single-cycle processor that loads instructions through the Tiny Tapeout pins."      # One line description of what your project does
+  description:  "A 16-bit processor with a byte-wide external memory bus."      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     10000000       # Clock frequency in Hz (or 0 if not applicable)
 
@@ -23,34 +23,34 @@ project:
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
   # Inputs
-  ui[0]: "LOAD_ADDR_0"
-  ui[1]: "LOAD_ADDR_1"
-  ui[2]: "LOAD_ADDR_2"
-  ui[3]: ""
-  ui[4]: ""
-  ui[5]: ""
-  ui[6]: "BYTE_SEL"
-  ui[7]: "RUN"
+  ui[0]: "IN0"
+  ui[1]: "IN1"
+  ui[2]: "IN2"
+  ui[3]: "IN3"
+  ui[4]: "IN4"
+  ui[5]: "IN5"
+  ui[6]: "IN6"
+  ui[7]: "IN7"
 
   # Outputs
-  uo[0]: "ALU_0"
-  uo[1]: "ALU_1"
-  uo[2]: "ALU_2"
-  uo[3]: "ALU_3"
-  uo[4]: "ALU_4"
-  uo[5]: "ALU_5"
-  uo[6]: "ALU_6"
-  uo[7]: "ALU_7"
+  uo[0]: "ADDR0"
+  uo[1]: "ADDR1"
+  uo[2]: "ADDR2"
+  uo[3]: "ADDR3"
+  uo[4]: "ADDR4"
+  uo[5]: "ADDR5"
+  uo[6]: "ADDR6"
+  uo[7]: "WR"
 
   # Bidirectional pins
-  uio[0]: "INSTR_0_ALU_8"
-  uio[1]: "INSTR_1_ALU_9"
-  uio[2]: "INSTR_2_ALU_10"
-  uio[3]: "INSTR_3_ALU_11"
-  uio[4]: "INSTR_4_ALU_12"
-  uio[5]: "INSTR_5_ALU_13"
-  uio[6]: "INSTR_6_ALU_14"
-  uio[7]: "INSTR_7_ALU_15"
+  uio[0]: "DATA0"
+  uio[1]: "DATA1"
+  uio[2]: "DATA2"
+  uio[3]: "DATA3"
+  uio[4]: "DATA4"
+  uio[5]: "DATA5"
+  uio[6]: "DATA6"
+  uio[7]: "DATA7"
 
 # Do not change!
 yaml_version: 6
