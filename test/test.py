@@ -3,16 +3,27 @@ from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, RisingEdge, Timer
 
 
+def pin(sig):
+    try:
+        return int(sig.value)
+    except ValueError:
+        return None
+
+
 async def sram(dut, mem):
     while True:
         await RisingEdge(dut.clk)
-        await Timer(1, unit="ns")
-        uo = int(dut.uo_out.value)
+        await Timer(2, unit="ns")
+        uo = pin(dut.uo_out)
+        if uo is None:
+            continue
         addr = uo & 0x7F
         we = (uo >> 7) & 1
         if we:
             if addr != 0x7F:
-                mem[addr] = int(dut.uio_out.value)
+                data = pin(dut.uio_out)
+                if data is not None:
+                    mem[addr] = data
         else:
             if addr != 0x7F:
                 dut.uio_in.value = mem[addr]
@@ -55,19 +66,19 @@ async def test_bus_program(dut):
 
     for i, exp in enumerate(expect):
         await RisingEdge(dut.clk)
-        await Timer(1, unit="ns")
-        got = int(dut.uo_out.value)
-        assert got == exp, f"cycle {i}: uo_out {got:02X} != {exp:02X}"
+        await Timer(2, unit="ns")
+        got = pin(dut.uo_out)
+        assert got == exp, f"cycle {i}: uo_out {got} != {exp:02X}"
         if exp & 0x80:
-            assert int(dut.uio_oe.value) == 0xFF
+            assert pin(dut.uio_oe) == 0xFF
             if exp == 0xA0:
-                assert int(dut.uio_out.value) == 0x02
+                assert pin(dut.uio_out) == 0x02
             if exp == 0xA1:
-                assert int(dut.uio_out.value) == 0x00
+                assert pin(dut.uio_out) == 0x00
         else:
-            assert int(dut.uio_oe.value) == 0x00
+            assert pin(dut.uio_oe) == 0x00
 
-    await Timer(1, unit="ns")
+    await Timer(2, unit="ns")
     assert mem[0x20] == 0x02
     assert mem[0x21] == 0x00
 
